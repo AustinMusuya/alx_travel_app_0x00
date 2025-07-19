@@ -1,88 +1,36 @@
-import mysql.connector
-from mysql.connector import errorcode
-import csv
-import uuid
+from django.core.management.base import BaseCommand
+from listings.models import Listing
+from listings.models import User
+from faker import Faker
+import random
 
+fake = Faker()
 
-# 1. Connect to MySQL server (no specific database)
-def connect_db():
-    try:
-        return mysql.connector.connect(
-            user='root',
-            password='warmachine!',  # TODO: Replace with your actual root password
-            host='localhost'
-        )
-    except mysql.connector.Error as err:
-        print(f"Connection error: {err}")
-        return None
+class Command(BaseCommand):
+    help = "Seed the database with sample listings using generators"
 
-# 2. Create database if it doesn't exist
-def create_database(connection):
-    cursor = connection.cursor()
-    try:
-        cursor.execute("CREATE DATABASE IF NOT EXISTS ALX_prodev")
-        print("✅ Database ALX_prodev created or already exists.")
-    except mysql.connector.Error as err:
-        print(f"❌ Failed to create database: {err}")
-    finally:
-        cursor.close()
+    def handle(self, *args, **kwargs):
+        self.stdout.write(self.style.WARNING('Seeding listings...'))
 
-# 3. Connect specifically to ALX_prodev
-def connect_to_prodev():
-    try:
-        return mysql.connector.connect(
-            user='root',
-            password='your_password',  # TODO: Replace with your actual root password
-            host='localhost',
-            database='ALX_prodev'
-        )
-    except mysql.connector.Error as err:
-        print(f"❌ Error connecting to ALX_prodev: {err}")
-        return None
+        host_users = list(User.objects.filter(is_host=True))
+        if not host_users:
+            self.stdout.write(self.style.ERROR('No hosts found. Please create host users first.'))
+            return
 
-# 4. Create user_data table
-def create_table(connection):
-    cursor = connection.cursor()
-    try:
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS user_data (
-            user_id CHAR(36) PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            email VARCHAR(255) NOT NULL,
-            age DECIMAL NOT NULL
-        )
-        """)
-        print("✅ Table user_data created or already exists.")
-    except mysql.connector.Error as err:
-        print(f"❌ Error creating table: {err}")
-    finally:
-        cursor.close()
+        def generate_listings(n):
+            for _ in range(n):
+                yield Listing(
+                    host=random.choice(host_users),
+                    title=fake.sentence(nb_words=5),
+                    description=fake.paragraph(nb_sentences=3),
+                    location=fake.city(),
+                    price_per_night=random.randint(20, 200),
+                    max_guests=random.randint(1, 6),
+                    available_from=fake.date_this_year(),
+                    available_to=fake.date_this_year()
+                )
 
-# 5. Insert data from CSV if not already in DB
-def insert_data(connection, csv_file):
-    cursor = connection.cursor()
-    try:
-        with open(csv_file, 'r') as file:
-            reader = csv.DictReader(file)
-            for row in reader:
-                user_id = str(uuid.uuid4())
-                cursor.execute("""
-                    INSERT INTO user_data (user_id, name, email, age)
-                    VALUES (%s, %s, %s, %s)
-                """, (user_id, row['name'], row['email'], row['age']))
-        connection.commit()
-        print("✅ CSV data inserted successfully.")
-    except Exception as e:
-        print(f"❌ Error inserting data: {e}")
-    finally:
-        cursor.close()
+        listings_to_create = list(generate_listings(20))  # or more, depending on your load
+        Listing.objects.bulk_create(listings_to_create, batch_size=10)
 
-# 6. Generator to stream one row at a time
-def stream_user_data(connection):
-    cursor = connection.cursor(dictionary=True)
-    try:
-        cursor.execute("SELECT * FROM user_data")
-        for row in cursor:
-            yield row
-    finally:
-        cursor.close()
+        self.stdout.write(self.style.SUCCESS(f'Successfully seeded {len(listings_to_create)} listings.'))
